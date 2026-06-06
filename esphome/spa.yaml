@@ -21,10 +21,8 @@ external_components:
     components: [gecko_spa]
 
 logger:
-  level: VERBOSE    # Use DEBUG at first to verify communication; set INFO later
+  level: DEBUG   # Use DEBUG at first to verify communication; set INFO later
   baud_rate: 0
-  logs:
-    gecko_spa: VERBOSE
 
 wifi:
   networks:
@@ -65,6 +63,13 @@ uart:
   baud_rate: 115200
   rx_buffer_size: 512
 
+globals:
+  # Watchdog: increments every 30s without WiFi → reboot after 6×30s = 3 min
+  - id: watchdog_counter
+    type: int
+    restore_value: false
+    initial_value: '0'
+
 # Gecko Spa main component
 gecko_spa:
   id: spa
@@ -94,49 +99,12 @@ switch:
     type: circulation
     name: "Whirlpool Zirkulation"
     icon: "mdi:rotate-3d-variant"
-  - platform: template
-    name: "Test Spa Time Sync"
-    id: test_spa_time_sync
-    icon: "mdi:clock-edit"
-    turn_on_action:
-      - lambda: |-
-          time_t current_timestamp = id(sntp_time).now().timestamp;
-          
-          if (current_timestamp > 0) {
-            time_t target_timestamp = current_timestamp;
-            
-            struct tm *time_info = localtime(&target_timestamp);
-            
-            uint16_t year   = time_info->tm_year + 1900;
-            uint8_t month   = time_info->tm_mon + 1;
-            uint8_t day     = time_info->tm_mday;
-            uint8_t hour    = time_info->tm_hour;
-            uint8_t minute  = time_info->tm_min;
-            uint8_t second  = time_info->tm_sec; // NEW: Read the current second
-            
-            // Call the updated function with the extra 'second' parameter
-            id(spa).send_datetime_command(year, month, day, hour, minute, second);
-            
-            ESP_LOGD("main", "Triggered time sync: %02d:%02d:%02d", hour, minute, second);
-          } else {
-            ESP_LOGW("main", "Time is not yet synchronized!");
-          }
-      # This turns the switch back off immediately so it acts as a button
-      - switch.turn_off: test_spa_time_sync
-
-    # Required placeholder action so ESPHome knows what to do when it turns off
-    turn_off_action:
-      - logger.log: "Time sync trigger reset"
 
 # Status sensors
 binary_sensor:
   - platform: gecko_spa
     gecko_spa_id: spa
-    type: standby
-    name: "Whirlpool Standby"
-
-  - platform: gecko_spa
-    gecko_spa_id: spa
+    id: spa_connected
     type: connected
     name: "Whirlpool Verbunden"
     device_class: connectivity
@@ -153,8 +121,11 @@ interval:
     then:
       if:
         condition:
-          time.has_time:
-            id: sntp_time
+          and:
+            - time.has_time:
+                id: sntp_time
+            - binary_sensor.is_on:
+                id: spa_connected
         then:
           - lambda: |-
               // 1. Get the LOCAL time directly from ESPHome
@@ -204,8 +175,22 @@ interval:
         else:
           - logger.log:
               level: DEBUG
-              format: "Waiting for NTP time synchronization before checking Spa clock..."
-
+              format: "Waiting for NTP time synchronization and Spa connection before checking Spa clock..."
+  - interval: 30s
+    then:
+      - if:
+          condition:
+            wifi.connected:
+          then:
+            - lambda: 'id(watchdog_counter) = 0;'
+          else:
+            - lambda: |-
+                id(watchdog_counter)++;
+                ESP_LOGW("watchdog", "No WiFi — count: %d/6", id(watchdog_counter));
+                if (id(watchdog_counter) >= 6) {
+                  ESP_LOGW("watchdog", "No WiFi for 3 minutes — rebooting");
+                  App.safe_reboot();
+                }
 
 sensor:
   - platform: uptime
