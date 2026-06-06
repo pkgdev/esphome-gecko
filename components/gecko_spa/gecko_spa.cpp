@@ -77,7 +77,7 @@ void GeckoSpa::loop() {
 void GeckoSpa::send_light_command(bool on) {
   uint8_t cmd[20] = {
       0x17, 0x0A, 0x00, 0x00, 0x00, 0x17, 0x09, 0x00,
-      0x00, 0x00, 0x00, 0x00, 0x06, 0x46, 0x52, 0x51,
+      0x00, 0x00, 0x00, 0x00, 0x06, 0x46, 0x50, 0x50,
       0x01, 0x33, (uint8_t)(on ? 0x01 : 0x00), 0x00};
   cmd[19] = calc_checksum(cmd, 20);
   send_i2c_message(cmd, 20);
@@ -87,11 +87,11 @@ void GeckoSpa::send_light_command(bool on) {
 void GeckoSpa::send_circ_command(bool on) {
   uint8_t cmd[20] = {
       0x17, 0x0A, 0x00, 0x00, 0x00, 0x17, 0x09, 0x00,
-      0x00, 0x00, 0x00, 0x00, 0x06, 0x46, 0x52, 0x51,
-      0x01, 0x6B, (uint8_t)(on ? 0x01 : 0x00), 0x00};
+      0x00, 0x00, 0x00, 0x00, 0x06, 0x46, 0x50, 0x50,
+      0x01, 0x03, (uint8_t)(on ? 0x01 : 0x00), 0x00};
   cmd[19] = calc_checksum(cmd, 20);
   send_i2c_message(cmd, 20);
-  ESP_LOGI(TAG, "Sent circ %s command", on ? "ON" : "OFF");
+  ESP_LOGI(TAG, "Sent circ %s command", on ? "LOW" : "OFF");
 }
 
 void GeckoSpa::send_pump1_command(uint8_t state) {
@@ -101,11 +101,11 @@ void GeckoSpa::send_pump1_command(uint8_t state) {
 
   uint8_t cmd[20] = {
       0x17, 0x0A, 0x00, 0x00, 0x00, 0x17, 0x09, 0x00,
-      0x00, 0x00, 0x00, 0x00, 0x06, 0x46, 0x52, 0x51,
+      0x00, 0x00, 0x00, 0x00, 0x06, 0x46, 0x50, 0x50,
       0x01, 0x03, state_val, 0x00};
   cmd[19] = calc_checksum(cmd, 20);
   send_i2c_message(cmd, 20);
-  ESP_LOGI(TAG, "Sent P1 state=%d command (val=0x%02X)", state, state_val);
+  ESP_LOGI(TAG, "Sent P1 state=%d command", state);
 }
 
 void GeckoSpa::send_pump2_command(uint8_t state) {
@@ -161,16 +161,21 @@ void GeckoSpa::send_program_command(uint8_t prog) {
 }
 
 void GeckoSpa::send_temperature_command(float temp_c) {
-  if (temp_c < 26.0 || temp_c > 40.0)
+  if (temp_c < 8.0 || temp_c > 40.0)
     return;
-  uint8_t temp_raw = (uint8_t)((temp_c * 18.0) - 512.0);
+  // Use full 16 bit information
+  uint16_t temp_raw = (uint16_t)((temp_c * 18.0) - 512.0);
+
+  // Get high and low byte
+  uint8_t high_byte = (uint8_t)((temp_raw >> 8) & 0xFF);
+  uint8_t low_byte = (uint8_t)(temp_raw & 0xFF);
   uint8_t cmd[21] = {
       0x17, 0x0A, 0x00, 0x00, 0x00, 0x17, 0x09, 0x00,
-      0x00, 0x00, 0x00, 0x00, 0x07, 0x46, 0x52, 0x51,
-      0x00, 0x01, 0x02, temp_raw, 0x00};
+      0x00, 0x00, 0x00, 0x00, 0x07, 0x46, 0x50, 0x50,
+      0x00, 0x01, high_byte, low_byte, 0x00};
   cmd[20] = calc_checksum(cmd, 21);
   send_i2c_message(cmd, 21);
-  ESP_LOGI(TAG, "Sent temperature %.1f command (raw=%02X)", temp_c, temp_raw);
+  ESP_LOGI(TAG, "Sent temperature %.1f command (raw=%02X, high=%02X, low=%02X)", temp_c, temp_raw, high_byte, low_byte);
 }
 
 void GeckoSpa::request_status() {
@@ -203,6 +208,14 @@ uint8_t GeckoSpa::calc_checksum(const uint8_t *data, uint8_t len) {
 }
 
 void GeckoSpa::send_i2c_message(const uint8_t *data, uint8_t len) {
+  // Build hex string for logging
+  char hex[len * 2 + 1];
+  for (int i = 0; i < len; i++) {
+    sprintf(hex + i * 2, "%02X", data[i]);
+  }
+  hex[len * 2] = '\0';
+  ESP_LOGD(TAG, "Sending I2C: %s", hex);
+	
   write_str("TX:");
   for (uint8_t i = 0; i < len; i++) {
     char hex[3];
@@ -626,7 +639,8 @@ void GeckoSpa::parse_status_message(const uint8_t *data) {
 
   // Derive states for Home Assistant entities
   bool new_standby = (quietState == 0x03);  // OFF in QuietState means standby
-  bool new_circ = cp_on;              // Circulation pump from device status (CP)
+  //bool new_circ = cp_on;              // Circulation pump from device status (CP)
+  uint8_t new_circ = p1_state; 	      // Circulation is P1 in LOW mode
   bool new_waterfall = waterfall;     // Waterfall from device status
   bool new_blower = bl_on;            // Blower from device status (BL)
   bool new_heating = heater_on;       // Heater from device status
@@ -661,7 +675,7 @@ void GeckoSpa::parse_status_message(const uint8_t *data) {
     circ_state_ = new_circ;
     ESP_LOGI(TAG, "Circulation: %s", circ_state_ ? "ON" : "OFF");
     if (circ_switch_)
-      circ_switch_->publish_state(circ_state_);
+      circ_switch_->publish_state(circ_state_ == 2);
   }
 
   if (first || new_waterfall != waterfall_state_) {
@@ -721,13 +735,13 @@ void GeckoSpa::parse_status_message(const uint8_t *data) {
     actual_temp_ = new_actual;
     ESP_LOGI(TAG, "Temp: target=%.1f actual=%.1f", target_temp_, actual_temp_);
     update_climate_state();
-  }
+  } 
 
   // Update P1-P4 pump states (all controllable switches)
   if (first || new_p1 != pump1_state_) {
     pump1_state_ = new_p1;
     if (pump1_switch_)
-      pump1_switch_->publish_state(pump1_state_ != 0);
+      pump1_switch_->publish_state(pump1_state_ == 1);
   }
   if (first || new_p2 != pump2_state_) {
     pump2_state_ = new_p2;
@@ -860,7 +874,7 @@ void GeckoSpa::parse_notification_message(const uint8_t *data) {
 void GeckoSpaClimate::setup() {
   this->mode = climate::CLIMATE_MODE_HEAT;
   this->action = climate::CLIMATE_ACTION_IDLE;
-  this->target_temperature = 37.0;
+  this->target_temperature = 30.0;
   this->current_temperature = NAN;
   this->publish_state();
 }
@@ -870,7 +884,7 @@ climate::ClimateTraits GeckoSpaClimate::traits() {
   traits.set_supports_current_temperature(true);
   traits.set_supported_modes({climate::CLIMATE_MODE_HEAT, climate::CLIMATE_MODE_COOL});
   traits.set_supports_action(true);
-  traits.set_visual_min_temperature(26.0);
+  traits.set_visual_min_temperature(8.0);
   traits.set_visual_max_temperature(40.0);
   traits.set_visual_temperature_step(0.5);
   return traits;

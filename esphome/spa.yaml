@@ -1,0 +1,128 @@
+substitutions:
+  device_name: spa-controller
+
+esphome:
+  name: ${device_name}
+  friendly_name: Spa Controller
+  libraries:
+    - bblanchon/ArduinoJson
+
+esp32:
+  board: seeed_xiao_esp32s3
+  variant: esp32s3
+  framework:
+    type: arduino
+
+# Pull Gecko Spa component directly from GitHub
+external_components:
+  - source: 
+      type: local
+      path: ../components
+    components: [gecko_spa]
+
+logger:
+  level: VERBOSE    # Use DEBUG at first to verify communication; set INFO later
+  baud_rate: 0
+  logs:
+    gecko_spa: VERBOSE
+
+wifi:
+  networks:
+    ssid: !secret wifi_ssid
+    password: !secret wifi_password
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "Spa-Controller"
+    password: "nXvj7RFvhENE"
+
+captive_portal:
+
+time:
+  - platform: sntp
+    id: sntp_time
+    timezone: "Europe/Berlin"
+    servers:
+      - 192.168.178.1
+      - pool.ntp.org
+      - time.google.com
+    on_time_sync:
+      then:
+        - logger.log: "NTP-Zeit synchronisiert"
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+ota:
+  platform: esphome
+  password: !secret ota_password
+
+# UART to Arduino I2C proxy — adjust pins to match your board
+uart:
+  id: arduino_uart
+  tx_pin: GPIO43
+  rx_pin: GPIO44
+  baud_rate: 115200
+  rx_buffer_size: 512
+
+# Gecko Spa main component
+gecko_spa:
+  id: spa
+  uart_id: arduino_uart
+  reset_pin: GPIO4    # D3 on XIAO — same pin as before
+
+# Climate entity (temperature control)
+climate:
+  - platform: gecko_spa
+    gecko_spa_id: spa
+    name: "Whirlpool"
+
+# Switches
+switch:
+  - platform: gecko_spa
+    gecko_spa_id: spa
+    type: light
+    name: "Whirlpool Licht"
+    icon: "mdi:lightbulb"
+  - platform: gecko_spa
+    gecko_spa_id: spa
+    type: pump1
+    name: "Whirlpool Sprudeln"
+    icon: "mdi:pump"
+  - platform: gecko_spa
+    gecko_spa_id: spa
+    type: circulation
+    name: "Whirlpool Zirkulation"
+    icon: "mdi:rotate-3d-variant"
+
+# Program selector
+select:
+  - platform: gecko_spa
+    gecko_spa_id: spa
+    name: "Whirlpool Program"
+    icon: "mdi:format-list-bulleted"
+
+# Status sensors
+binary_sensor:
+  - platform: gecko_spa
+    gecko_spa_id: spa
+    type: standby
+    name: "Whirlpool Standby"
+
+  - platform: gecko_spa
+    gecko_spa_id: spa
+    type: connected
+    name: "Whirlpool Verbunden"
+    device_class: connectivity
+
+# Text sensors
+text_sensor:
+  - platform: gecko_spa
+    gecko_spa_id: spa
+    type: spa_time
+    name: "Whirlpool Uhrzeit"
+
+sensor:
+  - platform: uptime
+    name: "Whirlpool Controller Uptime"
+    icon: "mdi:clock-outline"

@@ -122,7 +122,9 @@ class GeckoSpa : public Component, public uart::UARTDevice {
 
   // State getters
   bool get_light_state() { return light_state_; }
-  bool get_circ_state() { return circ_state_; }
+  // circulation is pump in low mode 
+  // bool get_circ_state() { return circ_state_; }
+  uint8_t get_circ_state() { return circ_state_; }
   bool get_waterfall_state() { return waterfall_state_; }
   uint8_t get_pump1_state() { return pump1_state_; }  // 0=OFF, 1=HIGH, 2=LOW
   uint8_t get_pump2_state() { return pump2_state_; }
@@ -162,7 +164,8 @@ class GeckoSpa : public Component, public uart::UARTDevice {
 
   // State
   bool light_state_{false};
-  bool circ_state_{false};
+  // circ is P1 in Low
+  uint8_t circ_state_{false};
   bool waterfall_state_{false};
   bool blower_state_{false};
   bool heating_state_{false};
