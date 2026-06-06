@@ -164,7 +164,7 @@ void GeckoSpa::send_temperature_command(float temp_c) {
   if (temp_c < 8.0 || temp_c > 40.0)
     return;
   // Use full 16 bit information
-  uint16_t temp_raw = (uint16_t)((temp_c * 18.0) - 512.0);
+  uint16_t temp_raw = (uint16_t)(temp_c * 18.0);
 
   // Get high and low byte
   uint8_t high_byte = (uint8_t)((temp_raw >> 8) & 0xFF);
