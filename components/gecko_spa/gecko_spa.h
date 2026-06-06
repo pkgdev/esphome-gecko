@@ -117,6 +117,7 @@ class GeckoSpa : public Component, public uart::UARTDevice {
   void send_pump4_command(uint8_t state);  // Experimental: func ID 0x06
   void send_program_command(uint8_t prog);
   void send_temperature_command(float temp_c);
+  void send_datetime_command(uint16_t year, uint8_t month, uint8_t day, uint8_t hour, uint8_t minute, uint8_t second);
   void request_status();
   void reset_arduino();
 

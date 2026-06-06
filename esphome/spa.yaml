@@ -94,13 +94,39 @@ switch:
     type: circulation
     name: "Whirlpool Zirkulation"
     icon: "mdi:rotate-3d-variant"
+  - platform: template
+    name: "Test Spa Time Sync"
+    id: test_spa_time_sync
+    icon: "mdi:clock-edit"
+    turn_on_action:
+      - lambda: |-
+          time_t current_timestamp = id(sntp_time).now().timestamp;
+          
+          if (current_timestamp > 0) {
+            time_t target_timestamp = current_timestamp;
+            
+            struct tm *time_info = localtime(&target_timestamp);
+            
+            uint16_t year   = time_info->tm_year + 1900;
+            uint8_t month   = time_info->tm_mon + 1;
+            uint8_t day     = time_info->tm_mday;
+            uint8_t hour    = time_info->tm_hour;
+            uint8_t minute  = time_info->tm_min;
+            uint8_t second  = time_info->tm_sec; // NEW: Read the current second
+            
+            // Call the updated function with the extra 'second' parameter
+            id(spa).send_datetime_command(year, month, day, hour, minute, second);
+            
+            ESP_LOGD("main", "Triggered time sync: %02d:%02d:%02d", hour, minute, second);
+          } else {
+            ESP_LOGW("main", "Time is not yet synchronized!");
+          }
+      # This turns the switch back off immediately so it acts as a button
+      - switch.turn_off: test_spa_time_sync
 
-# Program selector
-select:
-  - platform: gecko_spa
-    gecko_spa_id: spa
-    name: "Whirlpool Program"
-    icon: "mdi:format-list-bulleted"
+    # Required placeholder action so ESPHome knows what to do when it turns off
+    turn_off_action:
+      - logger.log: "Time sync trigger reset"
 
 # Status sensors
 binary_sensor:
@@ -120,7 +146,66 @@ text_sensor:
   - platform: gecko_spa
     gecko_spa_id: spa
     type: spa_time
+    id: spa_time
     name: "Whirlpool Uhrzeit"
+interval:
+  - interval: 1min
+    then:
+      if:
+        condition:
+          time.has_time:
+            id: sntp_time
+        then:
+          - lambda: |-
+              // 1. Get the LOCAL time directly from ESPHome
+              auto local_now = id(sntp_time).now();
+              
+              // 2. Parse the time from the Whirlpool text sensor
+              std::string spa_time_str = id(spa_time).state;
+              
+              if (spa_time_str.length() >= 14) {
+                int spa_mon, spa_day, spa_hour, spa_min, spa_sec;
+                
+                // Extremely fast parsing without heavy calendar objects
+                sscanf(spa_time_str.c_str(), "%2d/%2d %2d:%2d:%2d", 
+                       &spa_mon, &spa_day, &spa_hour, &spa_min, &spa_sec);
+                       
+                // 3. Convert both times simply to "Minutes of the day" to check deviation
+                // This completely completely bypasses the 3600s/7200s timezone/DST bugs!
+                long esp_minutes_today = (local_now.hour * 60) + local_now.minute;
+                long spa_minutes_today = (spa_hour * 60) + spa_min;
+                
+                long min_diff = std::labs(esp_minutes_today - spa_minutes_today);
+                
+                // Edge case: Handle midnight wraparound (e.g., 23:59 vs 00:01)
+                if (min_diff > 1400) {
+                  min_diff = 1440 - min_diff;
+                }
+                
+                // 4. Also check day/month to ensure date is correct
+                bool date_mismatch = (local_now.day_of_month != spa_day) || (local_now.month != spa_mon);
+                
+                // 5. If deviation is more than 1 minute OR the date is wrong, trigger sync!
+                if (min_diff > 1 || date_mismatch) {
+                  ESP_LOGW("main", "Time deviation detected! Syncing now...");
+                  
+                  uint16_t year   = local_now.year;
+                  uint8_t month   = local_now.month;
+                  uint8_t day     = local_now.day_of_month;
+                  uint8_t hour    = local_now.hour;
+                  uint8_t minute  = local_now.minute;
+                  uint8_t second  = local_now.second; 
+                  
+                  id(spa).send_datetime_command(year, month, day, hour, minute, second);
+                } else {
+                  ESP_LOGD("main", "Spa time check: Okay (Day Minutes Diff: %ld min)", min_diff);
+                }
+              }
+        else:
+          - logger.log:
+              level: DEBUG
+              format: "Waiting for NTP time synchronization before checking Spa clock..."
+
 
 sensor:
   - platform: uptime
